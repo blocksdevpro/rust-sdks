@@ -12,11 +12,4 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-fn main() {
-    println!("cargo::rustc-check-cfg=cfg(use_tract)");
-    let target = std::env::var("TARGET").unwrap_or_default();
-    if target == "aarch64-pc-windows-msvc" {
-        return;
-    }
-    println!("cargo::rustc-cfg=use_tract");
-}
+fn main() {}
