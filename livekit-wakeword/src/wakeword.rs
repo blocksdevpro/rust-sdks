@@ -23,8 +23,8 @@ use resampler::{Attenuation, Latency, ResamplerFir, SampleRate};
 use crate::embedding::EmbeddingModel;
 use crate::melspectrogram::MelspectrogramModel;
 use crate::{
-    build_session_from_file, to_resampler_rate, WakeWordError, EMBEDDING_STRIDE, EMBEDDING_WINDOW,
-    MIN_EMBEDDINGS,
+    build_session_from_file, build_session_from_memory, to_resampler_rate, WakeWordError,
+    EMBEDDING_STRIDE, EMBEDDING_WINDOW, MIN_EMBEDDINGS,
 };
 
 struct Resampler {
@@ -85,6 +85,39 @@ impl WakeWordModel {
         Ok(wakeword)
     }
 
+    pub fn with_bytes(
+        model_name: &str,
+        model_bytes: &[u8],
+        sample_rate: u32,
+    ) -> Result<Self, WakeWordError> {
+        let resampler = if sample_rate != 16000 {
+            let input_rate = to_resampler_rate(sample_rate)?;
+            // FIR resampler: 64-sample latency (~1.3ms at 48kHz) with 90dB
+            // stopband attenuation to match the quality of training data.
+            let fir = ResamplerFir::new(
+                1,
+                input_rate,
+                SampleRate::Hz16000,
+                Latency::Sample64,
+                Attenuation::Db90,
+            );
+            let output_buf = vec![0.0f32; fir.buffer_size_output()];
+            Some(Resampler { fir, output_buf, input_rate: sample_rate })
+        } else {
+            None
+        };
+
+        let mut wakeword = Self {
+            mel_model: MelspectrogramModel::new()?,
+            emb_model: EmbeddingModel::new()?,
+            classifiers: HashMap::new(),
+            resampler,
+        };
+
+        wakeword.load_model_from_bytes(model_bytes, model_name)?;
+        Ok(wakeword)
+    }
+
     /// Load a wake word classifier ONNX model from disk.
     ///
     /// If `model_name` is `None`, the file stem is used as the classifier name.
@@ -104,6 +137,17 @@ impl WakeWordModel {
         };
 
         let session = build_session_from_file(path)?;
+        self.classifiers.insert(name, session);
+        Ok(())
+    }
+
+    pub fn load_model_from_bytes(
+        &mut self,
+        model_bytes: &[u8],
+        model_name: &str,
+    ) -> Result<(), WakeWordError> {
+        let name = model_name.to_string();
+        let session = build_session_from_memory(model_bytes)?;
         self.classifiers.insert(name, session);
         Ok(())
     }
